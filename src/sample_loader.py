@@ -8,20 +8,15 @@ import numpy as np
 from pathlib import Path
 import librosa
 import sounddevice as sd
+import utils
 
 
 FRETS_PER_STRING = 25
 NUM_STRINGS = 6
 
-
-def normalize_amplitude(audio_array):
-    peak = np.max(np.abs(audio_array))
-    return audio_array if peak == 0 else audio_array / peak
-
-
 def load_wav(path, normalize=True):
-    data, sr = librosa.load(path, sr=22050, mono=True)
-    return (normalize_amplitude(data) if normalize else data), sr
+    data, sr = librosa.load(path, sr=44100, mono=True)
+    return (utils.normalize_amplitude(data) if normalize else data), sr
 
 
 def load_technique_samples(technique_path: Path):
@@ -42,7 +37,10 @@ StringSamples = list[FretSamples]
 TechniqueSamples = list[StringSamples]
 
 
-def load_samples_from_files() -> list[TechniqueSamples]:
+def load() -> list[TechniqueSamples]:
+    if Path(cache_path_str := "samples.npy").exists():
+        return np.load(cache_path_str, allow_pickle=True).tolist()
+
     techniques_paths = filter(Path.is_dir, Path("samples/raw").glob("*/*"))
 
     samples = []
@@ -50,10 +48,10 @@ def load_samples_from_files() -> list[TechniqueSamples]:
         technique_label = " ".join(technique_path.parts[-2:])
         print(f"{technique_idx} : {technique_label}")
         samples.append(load_technique_samples(technique_path))
-
+    np.save(cache_path_str, np.array(samples, dtype=object))
     return samples
 
 
-samples = load_samples_from_files()
-sd.play(samples[0][0][0])
-sd.wait()
+samples = load()
+# sd.play(samples[0][0][0])
+# sd.wait()
