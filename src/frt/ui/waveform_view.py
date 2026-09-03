@@ -3,19 +3,20 @@ from collections.abc import Callable
 import pyqtgraph as pg
 from pyqtgraph import PlotWidget
 from pyqtgraph.GraphicsScene.mouseEvents import MouseDragEvent
-from PyQt6.QtWidgets import QGraphicsProxyWidget
+from PyQt6.QtWidgets import QGraphicsProxyWidget, QMenu
 
-from frt.config import PLOT_HEIGHT, WAVEFORM_WIDTH, WINDOW_WIDTH
+from frt.audio.timeline import NoteEvent
+from frt.config import MIN_NOTE_WIDTH, PLOT_HEIGHT, TIMELINE_SAMPLES_PER_PIXEL
 
 
 class DragViewBox(pg.ViewBox):
     def __init__(
         self,
-        sample_index: int,
-        on_moved: Callable[[int, int], None],
+        event_id: int,
+        on_moved: Callable[[int, int], int],
     ):
         super().__init__()
-        self.sample_index = sample_index
+        self.event_id = event_id
         self.on_moved = on_moved
         self.proxy: QGraphicsProxyWidget | None = None
         self._x0: float | None = None
@@ -34,33 +35,90 @@ class DragViewBox(pg.ViewBox):
         if self._x0 is None:
             return
 
-        dx = ev.screenPos().x() - ev.buttonDownScreenPos().x()
-        max_x = max(WINDOW_WIDTH - self.proxy.widget().width(), 0)
-        new_x = min(max(self._x0 + dx, 0), max_x)
+        requested_x = max(
+            self._x0 + ev.screenPos().x() - ev.buttonDownScreenPos().x(),
+            0,
+        )
+        accepted_x = self.on_moved(self.event_id, int(requested_x))
+        self.proxy.setPos(accepted_x, self.proxy.pos().y())
 
-        self.on_moved(self.sample_index, int(new_x))
-        self.proxy.setPos(new_x, self.proxy.pos().y())
+
+class WaveformPlotWidget(PlotWidget):
+    def __init__(
+        self,
+        event: NoteEvent,
+        data,
+        drag_view_box: DragViewBox,
+        on_toggled: Callable[[int], None],
+        on_deleted: Callable[[int], None],
+    ):
+        super().__init__(viewBox=drag_view_box)
+        self.event = event
+        self.on_toggled = on_toggled
+        self.on_deleted = on_deleted
+
+        self.setDefaultPadding(0)
+        self.plot(data)
+        self.hideAxis("bottom")
+        self.hideAxis("left")
+        self.setMouseEnabled(x=False, y=False)
+        width = max(
+            int(event.duration_samples / TIMELINE_SAMPLES_PER_PIXEL),
+            MIN_NOTE_WIDTH,
+        )
+        self.setFixedSize(width, PLOT_HEIGHT - 4)
+
+    def mouseDoubleClickEvent(self, event) -> None:
+        self.on_toggled(self.event.id)
+        event.accept()
+
+    def contextMenuEvent(self, event) -> None:
+        menu = QMenu(self)
+        mute_action = menu.addAction("Unmute" if not self.event.enabled else "Mute")
+        delete_action = menu.addAction("Delete")
+        action = menu.exec(event.globalPos())
+
+        if action == mute_action:
+            self.on_toggled(self.event.id)
+        elif action == delete_action:
+            self.on_deleted(self.event.id)
 
 
-def create_draggable_plot(
+class NoteProxyWidget(QGraphicsProxyWidget):
+    def __init__(
+        self,
+        event: NoteEvent,
+        data,
+        on_moved: Callable[[int, int], int],
+        on_toggled: Callable[[int], None],
+        on_deleted: Callable[[int], None],
+    ):
+        super().__init__()
+        drag_view_box = DragViewBox(event.id, on_moved)
+        self.setWidget(
+            WaveformPlotWidget(
+                event,
+                data,
+                drag_view_box,
+                on_toggled,
+                on_deleted,
+            )
+        )
+        drag_view_box.bind(self)
+        self.setData(0, "note")
+        self.setData(1, event.id)
+        self.setOpacity(1.0 if event.enabled else 0.35)
+        self.setPos(
+            event.start_sample / TIMELINE_SAMPLES_PER_PIXEL,
+            event.string_index * PLOT_HEIGHT + 2,
+        )
+
+
+def create_note_item(
+    event: NoteEvent,
     data,
-    sample_index: int,
-    on_moved: Callable[[int, int], None],
+    on_moved: Callable[[int, int], int],
+    on_toggled: Callable[[int], None],
+    on_deleted: Callable[[int], None],
 ) -> QGraphicsProxyWidget:
-    drag_view_box = DragViewBox(sample_index, on_moved)
-
-    plot_widget = PlotWidget(viewBox=drag_view_box)
-    plot_widget.setDefaultPadding(0)
-    plot_widget.plot(data)
-    plot_widget.hideAxis("bottom")
-    plot_widget.hideAxis("left")
-    plot_widget.setMouseEnabled(x=False, y=False)
-    plot_widget.setFixedSize(WAVEFORM_WIDTH, PLOT_HEIGHT)
-
-    proxy = QGraphicsProxyWidget()
-    proxy.setWidget(plot_widget)
-    proxy.setPos(0, sample_index * PLOT_HEIGHT)
-
-    drag_view_box.bind(proxy)
-    return proxy
-
+    return NoteProxyWidget(event, data, on_moved, on_toggled, on_deleted)

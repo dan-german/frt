@@ -11,11 +11,8 @@ from pathlib import Path
 import librosa
 import numpy as np
 
-from frt.config import SAMPLE_RATE
+from frt.config import FRETS_PER_STRING, NUM_STRINGS, SAMPLE_RATE
 from frt.utils import normalize_amplitude
-
-FRETS_PER_STRING = 25
-NUM_STRINGS = 6
 
 FretSamples = np.ndarray
 StringSamples = list[FretSamples]
@@ -62,4 +59,3 @@ def load(
 
     np.save(cache_path, np.array(samples, dtype=object))
     return samples
-

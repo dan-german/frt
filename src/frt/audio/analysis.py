@@ -1,7 +1,13 @@
 import numpy as np
 import librosa
 
-from frt.config import SAMPLE_RATE
+from frt.config import (
+    LOG_BANDS_PER_OCTAVE,
+    LOG_BIN_MAX_FREQ,
+    LOG_BIN_MIN_FREQ,
+    LOG_BIN_REF_FREQ,
+    SAMPLE_RATE,
+)
 
 
 def compute_cqt(
@@ -15,6 +21,7 @@ def compute_cqt(
         sr=sample_rate,
         hop_length=hop_length,
         bins_per_octave=bins_per_octave,
+        n_bins=108
     )
     cqt_db = librosa.amplitude_to_db(np.abs(cqt), ref=np.max)
     times = librosa.frames_to_time(
@@ -38,3 +45,64 @@ def compute_stft(
     freqs = librosa.fft_frequencies(sr=sample_rate, n_fft=n_fft)
     return db, times, freqs
 
+
+def make_log_filterbank(
+    sample_rate: int = SAMPLE_RATE,
+    n_fft: int = 2048,
+    bands_per_octave: int = LOG_BANDS_PER_OCTAVE,
+    min_freq: float = LOG_BIN_MIN_FREQ,
+    max_freq: float = LOG_BIN_MAX_FREQ,
+    ref_freq: float = LOG_BIN_REF_FREQ,
+) -> tuple[np.ndarray, np.ndarray]:
+    fft_freqs = np.fft.rfftfreq(n_fft, 1 / sample_rate)
+    max_freq = min(max_freq, sample_rate / 2)
+
+    k_min = np.ceil(bands_per_octave * np.log2(min_freq / ref_freq)).astype(int)
+    k_max = np.floor(bands_per_octave * np.log2(max_freq / ref_freq)).astype(int)
+    k = np.arange(k_min - 1, k_max + 2)
+    log_freqs = ref_freq * 2 ** (k / bands_per_octave)
+
+    bins = np.round(log_freqs * n_fft / sample_rate).astype(int)
+    bins = np.clip(bins, 0, len(fft_freqs) - 1)
+    bins = np.unique(bins)
+
+    filters = []
+    center_freqs = []
+    for left, center, right in zip(bins[:-2], bins[1:-1], bins[2:]):
+        filt = np.zeros(len(fft_freqs))
+        filt[left : center + 1] = np.linspace(0, 1, center - left + 1)
+        filt[center : right + 1] = np.linspace(1, 0, right - center + 1)
+
+        if filt.sum() != 0:
+            filt /= filt.sum()
+
+        filters.append(filt)
+        center_freqs.append(fft_freqs[center])
+
+    return np.array(filters), np.array(center_freqs)
+
+
+def compute_log_bins(
+    audio: np.ndarray,
+    sample_rate: int = SAMPLE_RATE,
+    n_fft: int = 2048,
+    hop_length: int = 512,
+    bands_per_octave: int = LOG_BANDS_PER_OCTAVE,
+    min_freq: float = LOG_BIN_MIN_FREQ,
+    max_freq: float = LOG_BIN_MAX_FREQ,
+    ref_freq: float = LOG_BIN_REF_FREQ,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    stft = librosa.stft(audio, n_fft=n_fft, hop_length=hop_length, window="hann")
+    magnitude = np.abs(stft)
+    filters, center_freqs = make_log_filterbank(
+        sample_rate=sample_rate,
+        n_fft=n_fft,
+        bands_per_octave=bands_per_octave,
+        min_freq=min_freq,
+        max_freq=max_freq,
+        ref_freq=ref_freq,
+    )
+    log_magnitude = filters @ magnitude
+    db = librosa.amplitude_to_db(log_magnitude, ref=np.max)
+    times = librosa.times_like(stft, sr=sample_rate, hop_length=hop_length)
+    return db, times, center_freqs
