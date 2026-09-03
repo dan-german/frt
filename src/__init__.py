@@ -1,2 +1,3 @@
-def main() -> None:
-    print("Hello from frt!")
+from frt.app import main
+
+__all__ = ["main"]
