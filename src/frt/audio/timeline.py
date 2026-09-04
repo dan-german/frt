@@ -8,6 +8,8 @@ from frt.config import (
     ANALYSIS_TAIL_SECONDS,
     DEFAULT_TIMELINE_SECONDS,
     NUM_STRINGS,
+    RENDER_FADE_IN_SECONDS,
+    RENDER_FADE_OUT_SECONDS,
     SAMPLE_RATE,
     TIMELINE_GROW_SECONDS,
 )
@@ -136,8 +138,14 @@ class Timeline:
         tail_samples = ANALYSIS_TAIL_SECONDS * SAMPLE_RATE
         return max(self.max_event_end_sample() + tail_samples, SAMPLE_RATE)
 
-    def render(self) -> np.ndarray:
+    def render(
+        self,
+        fade_in_seconds: float = RENDER_FADE_IN_SECONDS,
+        fade_out_seconds: float = RENDER_FADE_OUT_SECONDS,
+    ) -> np.ndarray:
         output = np.zeros(self.render_length_samples(), dtype=np.float32)
+        fade_in_samples = seconds_to_samples(fade_in_seconds)
+        fade_out_samples = seconds_to_samples(fade_out_seconds)
 
         for event in self.events:
             if not event.enabled:
@@ -152,7 +160,12 @@ class Timeline:
             end = min(event.end_sample, len(output))
             length = end - start
             if length > 0:
-                output[start:end] += sample[:length] * event.volume
+                event_sample = sample[:length]
+                event_sample = apply_fade_in(event_sample, fade_in_samples)
+                event_sample = apply_fade_out(event_sample, fade_out_samples)
+                output[start:end] += (
+                    event_sample * event.volume
+                )
 
         return output
 
@@ -166,6 +179,40 @@ def create_default_timeline(library: SampleLibrary) -> Timeline:
     timeline = Timeline(library)
     for string_index, fret in enumerate(DEFAULT_FRETTING):
         if fret is not None:
-            timeline.add_note(string_index=string_index, fret=fret, start_sample=0)
+            timeline.add_note(string_index=string_index,
+                              fret=fret, start_sample=0)
     return timeline
 
+
+def seconds_to_samples(seconds: float) -> int:
+    return max(0, int(round(seconds * SAMPLE_RATE)))
+
+
+def apply_fade_in(sample: np.ndarray, fade_in_samples: int) -> np.ndarray:
+    if fade_in_samples <= 0 or len(sample) == 0:
+        return sample
+
+    faded = sample.copy()
+    fade_length = min(fade_in_samples, len(faded))
+    faded[:fade_length] *= np.linspace(
+        0.0,
+        1.0,
+        fade_length,
+        dtype=faded.dtype,
+    )
+    return faded
+
+
+def apply_fade_out(sample: np.ndarray, fade_out_samples: int) -> np.ndarray:
+    if fade_out_samples <= 0 or len(sample) == 0:
+        return sample
+
+    faded = sample.copy()
+    fade_length = min(fade_out_samples, len(faded))
+    faded[-fade_length:] *= np.linspace(
+        1.0,
+        0.0,
+        fade_length,
+        dtype=faded.dtype,
+    )
+    return faded

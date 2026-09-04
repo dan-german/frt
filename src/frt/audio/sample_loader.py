@@ -39,7 +39,7 @@ def load_technique_samples(technique_path: Path) -> TechniqueSamples:
 
     samples = []
     for start in range(0, expected_count, FRETS_PER_STRING):
-        string_wav_paths = sorted_wav_paths[start : start + FRETS_PER_STRING]
+        string_wav_paths = sorted_wav_paths[start: start + FRETS_PER_STRING]
         samples.append([load_wav(path)[0] for path in string_wav_paths])
     return samples
 
@@ -51,7 +51,8 @@ def load(
     if cache_path.exists():
         return np.load(cache_path, allow_pickle=True).tolist()
 
-    technique_paths = sorted(path for path in raw_root.glob("*/*") if path.is_dir())
+    technique_paths = sorted(
+        path for path in raw_root.glob("*/*") if path.is_dir())
 
     samples = []
     for technique_path in technique_paths:

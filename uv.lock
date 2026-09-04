@@ -236,6 +236,7 @@ dependencies = [
     { name = "pyqt6" },
     { name = "pyqtgraph" },
     { name = "sounddevice" },
+    { name = "soundfile" },
 ]
 
 [package.metadata]
@@ -245,6 +246,7 @@ requires-dist = [
     { name = "pyqt6", specifier = ">=6.11.0" },
     { name = "pyqtgraph", specifier = ">=0.14.0" },
     { name = "sounddevice", specifier = ">=0.5.0" },
+    { name = "soundfile", specifier = ">=0.14.0" },
 ]
 
 [[package]]
