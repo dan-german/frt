@@ -1,3 +1,6 @@
+from collections.abc import Iterable
+from enum import Enum
+
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QBrush, QColor, QPen
 from PyQt6.QtWidgets import (
@@ -27,6 +30,21 @@ from frt.ui.spectrogram_view import SpectrogramPlot
 from frt.ui.waveform_view import create_note_item
 
 
+class AnalysisPlot(Enum):
+    STFT = "stft"
+    CQT = "cqt"
+    LOG_BINS = "log_bins"
+
+
+DEFAULT_ANALYSIS_PLOTS = (
+    AnalysisPlot.STFT,
+    AnalysisPlot.CQT,
+    AnalysisPlot.LOG_BINS,
+)
+
+type AnalysisPlotSelection = AnalysisPlot | Iterable[AnalysisPlot]
+
+
 class TimelineScene(QGraphicsScene):
     def __init__(self, on_empty_double_clicked):
         super().__init__()
@@ -48,13 +66,24 @@ class TimelineScene(QGraphicsScene):
 
 
 class MainWindow(QMainWindow):
-    def __init__(self, timeline: Timeline):
+    def __init__(
+        self,
+        timeline: Timeline,
+        plots: AnalysisPlotSelection | None = None,
+    ):
         super().__init__()
         self.timeline = timeline
         self.note_items = []
-        self.stft_plot = SpectrogramPlot("Frequency", "Hz")
-        self.cqt_plot = SpectrogramPlot("Frequency (log)")
-        self.log_bins_plot = SpectrogramPlot("Log bins")
+        self.analysis_plots = (
+            DEFAULT_ANALYSIS_PLOTS
+            if plots is None
+            else (plots,)
+            if isinstance(plots, AnalysisPlot)
+            else tuple(plots)
+        )
+        self.spectrogram_plots = {
+            plot: self.create_spectrogram_plot(plot) for plot in self.analysis_plots
+        }
         self.fret_input = QSpinBox()
         self.technique_input = QSpinBox()
 
@@ -78,10 +107,18 @@ class MainWindow(QMainWindow):
     def create_top_row(self) -> QWidget:
         top_row = QWidget()
         top_layout = QHBoxLayout(top_row)
-        top_layout.addWidget(self.stft_plot)
-        top_layout.addWidget(self.cqt_plot)
-        top_layout.addWidget(self.log_bins_plot)
+        for plot in self.analysis_plots:
+            top_layout.addWidget(self.spectrogram_plots[plot])
         return top_row
+
+    def create_spectrogram_plot(self, plot: AnalysisPlot) -> SpectrogramPlot:
+        if plot is AnalysisPlot.STFT:
+            return SpectrogramPlot("Frequency", "Hz")
+        if plot is AnalysisPlot.CQT:
+            return SpectrogramPlot("Frequency (log)")
+        if plot is AnalysisPlot.LOG_BINS:
+            return SpectrogramPlot("Log bins")
+        raise ValueError(f"unsupported analysis plot: {plot}")
 
     def create_plots_view(self) -> QGraphicsView:
         self.plots_scene = TimelineScene(self.add_note_at)
@@ -208,23 +245,26 @@ class MainWindow(QMainWindow):
     def update_spectrograms(self) -> None:
         audio = self.timeline.render()
 
-        stft_db, stft_times, stft_freqs = compute_stft(audio)
-        self.stft_plot.update_spectrogram(
-            stft_db,
-            stft_times[-1] if len(stft_times) else 1,
-            stft_freqs[-1] if len(stft_freqs) else 1,
-        )
+        if AnalysisPlot.STFT in self.spectrogram_plots:
+            stft_db, stft_times, stft_freqs = compute_stft(audio)
+            self.spectrogram_plots[AnalysisPlot.STFT].update_spectrogram(
+                stft_db,
+                stft_times[-1] if len(stft_times) else 1,
+                stft_freqs[-1] if len(stft_freqs) else 1,
+            )
 
-        cqt_db, cqt_times = compute_cqt(audio)
-        self.cqt_plot.update_spectrogram(
-            cqt_db,
-            cqt_times[-1] if len(cqt_times) else 1,
-            cqt_db.shape[0] if cqt_db.ndim else 1,
-        )
+        if AnalysisPlot.CQT in self.spectrogram_plots:
+            cqt_db, cqt_times = compute_cqt(audio)
+            self.spectrogram_plots[AnalysisPlot.CQT].update_spectrogram(
+                cqt_db,
+                cqt_times[-1] if len(cqt_times) else 1,
+                cqt_db.shape[0] if cqt_db.ndim else 1,
+            )
 
-        log_bin_db, log_bin_times, log_bin_centers = compute_log_bins(audio)
-        self.log_bins_plot.update_spectrogram(
-            log_bin_db,
-            log_bin_times[-1] if len(log_bin_times) else 1,
-            len(log_bin_centers),
-        )
+        if AnalysisPlot.LOG_BINS in self.spectrogram_plots:
+            log_bin_db, log_bin_times, log_bin_centers = compute_log_bins(audio)
+            self.spectrogram_plots[AnalysisPlot.LOG_BINS].update_spectrogram(
+                log_bin_db,
+                log_bin_times[-1] if len(log_bin_times) else 1,
+                len(log_bin_centers),
+            )

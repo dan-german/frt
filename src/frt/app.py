@@ -5,26 +5,45 @@ from PyQt6.QtWidgets import QApplication
 
 from frt.audio.sample_library import SampleLibrary
 from frt.audio.timeline import Timeline
-from frt.ui.main_window import MainWindow
+from frt.ui.main_window import AnalysisPlot, AnalysisPlotSelection, MainWindow
 
 if TYPE_CHECKING:
     from frt.dataset.synthetic import SyntheticExample
 
 
-def run_timeline(timeline: Timeline, argv: list[str] | None = None) -> int:
+__all__ = [
+    "AnalysisPlot",
+    "AnalysisPlotSelection",
+    "main",
+    "run_example",
+    "run_timeline",
+]
+
+
+def run_timeline(
+    timeline: Timeline,
+    argv: list[str] | None = None,
+    *,
+    plots: AnalysisPlotSelection | None = None,
+) -> int:
     app = QApplication.instance()
     if app is None:
         app = QApplication(sys.argv if argv is None else argv)
 
-    window = MainWindow(timeline)
+    window = MainWindow(timeline, plots=plots)
     window.show()
     return app.exec()
 
 
-def run_example(example: "SyntheticExample", argv: list[str] | None = None) -> int:
+def run_example(
+    example: "SyntheticExample",
+    argv: list[str] | None = None,
+    *,
+    plots: AnalysisPlotSelection | None = None,
+) -> int:
     if example.timeline is None:
         raise ValueError("example must include a timeline to open it in the app")
-    return run_timeline(example.timeline, argv=argv)
+    return run_timeline(example.timeline, argv=argv, plots=plots)
 
 
 def main(argv: list[str] | None = None) -> int:

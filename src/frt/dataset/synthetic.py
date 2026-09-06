@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 import json
 from pathlib import Path
-from typing import Iterator
+from typing import Iterable, Iterator
 
 import numpy as np
 import soundfile as sf
@@ -88,6 +88,62 @@ def labels_from_events(events: list[NoteEvent]) -> list[NoteLabel]:
         for event in sorted(events, key=lambda item: (item.start_sample, item.string_index))
         if event.enabled
     ]
+
+
+def generate_custom_example(
+    library: SampleLibrary,
+    notes: Iterable[tuple[int, int]],
+    start_sample: int = 0,
+    technique_index: int = 0,
+    volume: float = 1.0,
+    gap_samples: int = 0,
+    example_id: str | None = None,
+) -> SyntheticExample:
+    """Generate an example from explicit string/fret pairs.
+
+    Notes on different strings share the requested start sample. Repeated notes on
+    the same string are placed at the earliest non-overlapping sample for that
+    string, preserving the input order.
+    """
+    if not 0 <= technique_index < library.technique_count:
+        raise ValueError(
+            f"technique_index must be between 0 and {library.technique_count - 1}"
+        )
+    if volume < 0:
+        raise ValueError("volume must be non-negative")
+    if gap_samples < 0:
+        raise ValueError("gap_samples must be non-negative")
+
+    timeline = Timeline(library)
+    next_start_by_string = [max(start_sample, 0)] * NUM_STRINGS
+    for string_index, fret in notes:
+        if not 0 <= string_index < NUM_STRINGS:
+            raise ValueError(f"string_index must be between 0 and {NUM_STRINGS - 1}")
+        if not 0 <= fret < FRETS_PER_STRING:
+            raise ValueError(f"fret must be between 0 and {FRETS_PER_STRING - 1}")
+
+        note_start = next_start_by_string[string_index]
+        event = timeline.add_note(
+            string_index=string_index,
+            fret=fret,
+            start_sample=note_start,
+            technique_index=technique_index,
+            volume=volume,
+        )
+        if event is None:
+            raise ValueError(
+                f"could not place string={string_index}, fret={fret} "
+                f"at sample {note_start}"
+            )
+        next_start_by_string[string_index] = event.end_sample + gap_samples
+
+    return SyntheticExample(
+        audio=timeline.render(),
+        labels=labels_from_events(timeline.events),
+        sample_rate=SAMPLE_RATE,
+        example_id=example_id,
+        timeline=timeline,
+    )
 
 
 def generate_example(

@@ -7,6 +7,7 @@ import numpy as np
 
 from frt.dataset.synthetic import (
     RiffGenerationConfig,
+    generate_custom_example,
     generate_dataset,
     generate_example,
     write_dataset,
@@ -121,6 +122,49 @@ class SyntheticDatasetTest(unittest.TestCase):
             )
             for previous, current in zip(labels, labels[1:], strict=False):
                 self.assertLessEqual(previous.end_sample, current.start_sample)
+
+    def test_custom_example_places_same_string_notes_back_to_back(self) -> None:
+        example = generate_custom_example(
+            library=self.library,
+            notes=[(5, 0), (5, 1), (5, 2)],
+            gap_samples=3,
+            example_id="custom",
+        )
+
+        self.assertEqual(example.example_id, "custom")
+        self.assertEqual(
+            [(label.string_index, label.fret) for label in example.labels],
+            [(5, 0), (5, 1), (5, 2)],
+        )
+        self.assertEqual(
+            [(label.start_sample, label.end_sample) for label in example.labels],
+            [(0, 64), (67, 131), (134, 198)],
+        )
+        self.assertGreaterEqual(len(example.audio), 198)
+        self.assertIsNotNone(example.timeline)
+
+    def test_custom_example_keeps_different_strings_simultaneous(self) -> None:
+        example = generate_custom_example(
+            library=self.library,
+            notes=[(5, 0), (4, 2), (5, 1)],
+            start_sample=10,
+        )
+
+        labels = example.labels
+        self.assertEqual(labels[0].start_sample, 10)
+        self.assertEqual(labels[1].start_sample, 10)
+        self.assertEqual(labels[2].start_sample, 74)
+        self.assertEqual(
+            [(label.string_index, label.fret) for label in labels],
+            [(4, 2), (5, 0), (5, 1)],
+        )
+
+    def test_custom_example_rejects_invalid_note_specs(self) -> None:
+        with self.assertRaises(ValueError):
+            generate_custom_example(library=self.library, notes=[(6, 0)])
+
+        with self.assertRaises(ValueError):
+            generate_custom_example(library=self.library, notes=[(0, 25)])
 
     def test_write_dataset_writes_audio_annotations_and_manifest(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
