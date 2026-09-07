@@ -3,6 +3,7 @@ from collections.abc import Callable
 import pyqtgraph as pg
 from pyqtgraph import PlotWidget
 from pyqtgraph.GraphicsScene.mouseEvents import MouseDragEvent
+from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QGraphicsProxyWidget, QMenu
 
 from frt.audio.timeline import NoteEvent
@@ -49,11 +50,14 @@ class WaveformPlotWidget(PlotWidget):
         event: NoteEvent,
         data,
         drag_view_box: DragViewBox,
+        selected: bool,
+        on_selected: Callable[[int], None],
         on_toggled: Callable[[int], None],
         on_deleted: Callable[[int], None],
     ):
         super().__init__(viewBox=drag_view_box)
         self.event = event
+        self.on_selected = on_selected
         self.on_toggled = on_toggled
         self.on_deleted = on_deleted
 
@@ -67,6 +71,17 @@ class WaveformPlotWidget(PlotWidget):
             MIN_NOTE_WIDTH,
         )
         self.setFixedSize(width, PLOT_HEIGHT - 4)
+        self.set_selected(selected)
+
+    def set_selected(self, selected: bool) -> None:
+        self.setStyleSheet(
+            "border: 2px solid #65d4ff;" if selected else "border: 0px;"
+        )
+
+    def mousePressEvent(self, event) -> None:
+        super().mousePressEvent(event)
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.on_selected(self.event.id)
 
     def mouseDoubleClickEvent(self, event) -> None:
         self.on_toggled(self.event.id)
@@ -89,7 +104,9 @@ class NoteProxyWidget(QGraphicsProxyWidget):
         self,
         event: NoteEvent,
         data,
+        selected: bool,
         on_moved: Callable[[int, int], int],
+        on_selected: Callable[[int], None],
         on_toggled: Callable[[int], None],
         on_deleted: Callable[[int], None],
     ):
@@ -100,6 +117,8 @@ class NoteProxyWidget(QGraphicsProxyWidget):
                 event,
                 data,
                 drag_view_box,
+                selected,
+                on_selected,
                 on_toggled,
                 on_deleted,
             )
@@ -117,8 +136,18 @@ class NoteProxyWidget(QGraphicsProxyWidget):
 def create_note_item(
     event: NoteEvent,
     data,
+    selected: bool,
     on_moved: Callable[[int, int], int],
+    on_selected: Callable[[int], None],
     on_toggled: Callable[[int], None],
     on_deleted: Callable[[int], None],
 ) -> QGraphicsProxyWidget:
-    return NoteProxyWidget(event, data, on_moved, on_toggled, on_deleted)
+    return NoteProxyWidget(
+        event,
+        data,
+        selected,
+        on_moved,
+        on_selected,
+        on_toggled,
+        on_deleted,
+    )

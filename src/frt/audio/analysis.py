@@ -10,18 +10,58 @@ from frt.config import (
 )
 
 
+def shift_frequency_bins(
+    matrix: np.ndarray,
+    bins_offset: int,
+    fill_value: float = np.nan,
+) -> np.ndarray:
+    if matrix.ndim == 0:
+        raise ValueError("matrix must have at least one axis")
+
+    shifted = np.full(matrix.shape, fill_value, dtype=matrix.dtype)
+    row_count = matrix.shape[0]
+    if row_count == 0:
+        return shifted
+
+    if bins_offset == 0:
+        return matrix.copy()
+
+    if abs(bins_offset) >= row_count:
+        return shifted
+
+    if bins_offset > 0:
+        shifted[bins_offset:] = matrix[: row_count - bins_offset]
+    else:
+        shifted[: row_count + bins_offset] = matrix[-bins_offset:]
+
+    return shifted
+
+
+def max_cqt_bins(
+    sample_rate: int = SAMPLE_RATE,
+    bins_per_octave: int = 12,
+    fmin: float | None = None,
+) -> int:
+    min_frequency = librosa.note_to_hz("C1") if fmin is None else fmin
+    nyquist = sample_rate / 2
+    return int(np.floor(bins_per_octave * np.log2(nyquist / min_frequency))) + 1
+
+
 def compute_cqt(
     audio: np.ndarray,
     sample_rate: int = SAMPLE_RATE,
     hop_length: int = 256,
     bins_per_octave: int = 12,
+    n_bins: int = 108,
+    fmin: float | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
     cqt = librosa.cqt(
         audio,
         sr=sample_rate,
         hop_length=hop_length,
         bins_per_octave=bins_per_octave,
-        n_bins=108
+        n_bins=n_bins,
+        fmin=fmin,
     )
     cqt_db = librosa.amplitude_to_db(np.abs(cqt), ref=np.max)
     times = librosa.frames_to_time(

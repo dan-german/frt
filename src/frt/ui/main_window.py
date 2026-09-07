@@ -1,6 +1,7 @@
 from collections.abc import Iterable
 from enum import Enum
 
+import numpy as np
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QBrush, QColor, QPen
 from PyQt6.QtWidgets import (
@@ -15,13 +16,20 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from frt.audio.analysis import compute_cqt, compute_log_bins, compute_stft
+from frt.audio.analysis import (
+    compute_cqt,
+    compute_log_bins,
+    compute_stft,
+    max_cqt_bins,
+    shift_frequency_bins,
+)
 from frt.audio.timeline import Timeline
 from frt.config import (
     ANALYSIS_UPDATE_DELAY_MS,
     FRETS_PER_STRING,
     NUM_STRINGS,
     PLOT_HEIGHT,
+    SAMPLE_RATE,
     TIMELINE_SAMPLES_PER_PIXEL,
     WINDOW_HEIGHT,
     WINDOW_WIDTH,
@@ -41,6 +49,8 @@ DEFAULT_ANALYSIS_PLOTS = (
     AnalysisPlot.CQT,
     AnalysisPlot.LOG_BINS,
 )
+CQT_SHIFT_MIN_SEMITONES = -24
+CQT_SHIFT_MAX_SEMITONES = 24
 
 type AnalysisPlotSelection = AnalysisPlot | Iterable[AnalysisPlot]
 
@@ -84,15 +94,20 @@ class MainWindow(QMainWindow):
         self.spectrogram_plots = {
             plot: self.create_spectrogram_plot(plot) for plot in self.analysis_plots
         }
+        self.selected_event_id: int | None = None
+        self.selected_shift_semitones = 0
         self.fret_input = QSpinBox()
         self.technique_input = QSpinBox()
+        self.shift_label = QLabel()
 
         self.analysis_update_timer = QTimer(self)
         self.analysis_update_timer.setSingleShot(True)
         self.analysis_update_timer.timeout.connect(self.update_spectrograms)
 
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.resize(WINDOW_WIDTH, WINDOW_HEIGHT)
         self.setCentralWidget(self.create_container())
+        self.update_shift_label()
         self.refresh_note_items()
         self.update_spectrograms()
 
@@ -135,6 +150,7 @@ class MainWindow(QMainWindow):
         self.plots_view.setAlignment(
             Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft
         )
+        self.plots_view.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         return self.plots_view
 
     def add_lane_backgrounds(self) -> None:
@@ -165,6 +181,7 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.fret_input)
         layout.addWidget(QLabel("Technique"))
         layout.addWidget(self.technique_input)
+        layout.addWidget(self.shift_label)
         layout.addStretch()
         layout.addWidget(self.create_play_button())
         return controls
@@ -187,7 +204,9 @@ class MainWindow(QMainWindow):
                     event.string_index,
                     event.fret,
                 ),
+                event.id == self.selected_event_id,
                 self.on_note_moved,
+                self.on_note_selected,
                 self.on_note_toggled,
                 self.on_note_deleted,
             )
@@ -219,6 +238,20 @@ class MainWindow(QMainWindow):
         self.refresh_note_items()
         self.analysis_update_timer.start(ANALYSIS_UPDATE_DELAY_MS)
 
+    def on_note_selected(self, event_id: int) -> None:
+        self.selected_event_id = event_id
+        self.selected_shift_semitones = 0
+        self.update_shift_label()
+        self.update_note_selection_styles()
+        self.update_spectrograms()
+        self.setFocus(Qt.FocusReason.MouseFocusReason)
+
+    def update_note_selection_styles(self) -> None:
+        for item in self.note_items:
+            widget = item.widget()
+            if hasattr(widget, "set_selected"):
+                widget.set_selected(item.data(1) == self.selected_event_id)
+
     def on_note_moved(self, event_id: int, x_position: int) -> int:
         event = self.timeline.event_by_id(event_id)
         if event is None:
@@ -239,8 +272,44 @@ class MainWindow(QMainWindow):
 
     def on_note_deleted(self, event_id: int) -> None:
         self.timeline.delete_note(event_id)
+        if self.selected_event_id == event_id:
+            self.selected_event_id = None
+            self.selected_shift_semitones = 0
+            self.update_shift_label()
         self.refresh_note_items()
         self.analysis_update_timer.start(ANALYSIS_UPDATE_DELAY_MS)
+
+    def keyPressEvent(self, event) -> None:
+        if self.selected_event_id is not None and event.key() in (
+            Qt.Key.Key_Left,
+            Qt.Key.Key_Right,
+        ):
+            direction = -1 if event.key() == Qt.Key.Key_Left else 1
+            self.set_selected_shift(self.selected_shift_semitones + direction)
+            event.accept()
+            return
+
+        super().keyPressEvent(event)
+
+    def set_selected_shift(self, semitones: int) -> None:
+        clamped = min(
+            max(semitones, CQT_SHIFT_MIN_SEMITONES),
+            CQT_SHIFT_MAX_SEMITONES,
+        )
+        if clamped == self.selected_shift_semitones:
+            return
+
+        self.selected_shift_semitones = clamped
+        self.update_shift_label()
+        self.update_spectrograms()
+
+    def update_shift_label(self) -> None:
+        if self.selected_event_id is None:
+            self.shift_label.setText("CQT shift: none")
+        else:
+            self.shift_label.setText(
+                f"CQT shift: {self.selected_shift_semitones:+d} st"
+            )
 
     def update_spectrograms(self) -> None:
         audio = self.timeline.render()
@@ -255,11 +324,13 @@ class MainWindow(QMainWindow):
 
         if AnalysisPlot.CQT in self.spectrogram_plots:
             cqt_db, cqt_times = compute_cqt(audio)
-            self.spectrogram_plots[AnalysisPlot.CQT].update_spectrogram(
+            cqt_plot = self.spectrogram_plots[AnalysisPlot.CQT]
+            cqt_plot.update_spectrogram(
                 cqt_db,
                 cqt_times[-1] if len(cqt_times) else 1,
                 cqt_db.shape[0] if cqt_db.ndim else 1,
             )
+            self.update_cqt_overlay(cqt_plot, cqt_db.shape[0] if cqt_db.ndim else 1)
 
         if AnalysisPlot.LOG_BINS in self.spectrogram_plots:
             log_bin_db, log_bin_times, log_bin_centers = compute_log_bins(audio)
@@ -268,3 +339,41 @@ class MainWindow(QMainWindow):
                 log_bin_times[-1] if len(log_bin_times) else 1,
                 len(log_bin_centers),
             )
+
+    def update_cqt_overlay(self, plot: SpectrogramPlot, y_max: int) -> None:
+        if self.selected_event_id is None:
+            plot.clear_overlay()
+            return
+
+        event = self.timeline.event_by_id(self.selected_event_id)
+        if event is None:
+            self.selected_event_id = None
+            self.selected_shift_semitones = 0
+            self.update_shift_label()
+            plot.clear_overlay()
+            return
+
+        sample = self.timeline.library.sample(
+            event.technique_index,
+            event.string_index,
+            event.fret,
+        )
+        visible_bins = int(y_max)
+        extra_high_bins = max(-self.selected_shift_semitones, 0)
+        source_bins = min(
+            visible_bins + extra_high_bins,
+            max_cqt_bins(sample_rate=SAMPLE_RATE),
+        )
+        sample_cqt_db, _ = compute_cqt(sample, n_bins=source_bins)
+        overlay_floor = float(np.min(sample_cqt_db)) if sample_cqt_db.size else 0.0
+        shifted_cqt_db = shift_frequency_bins(
+            sample_cqt_db,
+            self.selected_shift_semitones,
+            fill_value=overlay_floor,
+        )[:visible_bins]
+        plot.update_overlay(
+            shifted_cqt_db,
+            event.start_sample / SAMPLE_RATE,
+            event.duration_samples / SAMPLE_RATE,
+            y_max,
+        )
