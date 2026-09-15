@@ -83,12 +83,8 @@ class WaveformPlotWidget(PlotWidget):
         if event.button() == Qt.MouseButton.LeftButton:
             self.on_selected(self.event.id)
 
-    def mouseDoubleClickEvent(self, event) -> None:
-        self.on_toggled(self.event.id)
-        event.accept()
-
     def contextMenuEvent(self, event) -> None:
-        menu = QMenu(self)
+        menu = QMenu()
         mute_action = menu.addAction("Unmute" if not self.event.enabled else "Mute")
         delete_action = menu.addAction("Delete")
         action = menu.exec(event.globalPos())

@@ -56,9 +56,17 @@ type AnalysisPlotSelection = AnalysisPlot | Iterable[AnalysisPlot]
 
 
 class TimelineScene(QGraphicsScene):
-    def __init__(self, on_empty_double_clicked):
+    def __init__(self, on_empty_clicked, on_empty_double_clicked):
         super().__init__()
+        self.on_empty_clicked = on_empty_clicked
         self.on_empty_double_clicked = on_empty_double_clicked
+
+    def mousePressEvent(self, event) -> None:
+        note_items = [item for item in self.items(
+            event.scenePos()) if item.data(0) == "note"]
+        if not note_items and event.button() == Qt.MouseButton.LeftButton:
+            self.on_empty_clicked()
+        super().mousePressEvent(event)
 
     def mouseDoubleClickEvent(self, event) -> None:
         note_items = [
@@ -70,7 +78,8 @@ class TimelineScene(QGraphicsScene):
 
         string_index = int(event.scenePos().y() // PLOT_HEIGHT)
         if 0 <= string_index < NUM_STRINGS:
-            start_sample = int(event.scenePos().x() * TIMELINE_SAMPLES_PER_PIXEL)
+            start_sample = int(event.scenePos().x() *
+                               TIMELINE_SAMPLES_PER_PIXEL)
             self.on_empty_double_clicked(string_index, max(start_sample, 0))
             event.accept()
 
@@ -136,7 +145,8 @@ class MainWindow(QMainWindow):
         raise ValueError(f"unsupported analysis plot: {plot}")
 
     def create_plots_view(self) -> QGraphicsView:
-        self.plots_scene = TimelineScene(self.add_note_at)
+        self.plots_scene = TimelineScene(
+            self.clear_note_selection, self.add_note_at)
         self.plots_scene.setBackgroundBrush(Qt.GlobalColor.darkGray)
         self.add_lane_backgrounds()
         self.update_scene_rect()
@@ -146,7 +156,8 @@ class MainWindow(QMainWindow):
         self.plots_view.setHorizontalScrollBarPolicy(
             Qt.ScrollBarPolicy.ScrollBarAsNeeded
         )
-        self.plots_view.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.plots_view.setVerticalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.plots_view.setAlignment(
             Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft
         )
@@ -239,7 +250,22 @@ class MainWindow(QMainWindow):
         self.analysis_update_timer.start(ANALYSIS_UPDATE_DELAY_MS)
 
     def on_note_selected(self, event_id: int) -> None:
+        if self.selected_event_id == event_id:
+            self.clear_note_selection()
+            return
+
         self.selected_event_id = event_id
+        self.selected_shift_semitones = 0
+        self.update_shift_label()
+        self.update_note_selection_styles()
+        self.update_spectrograms()
+        self.setFocus(Qt.FocusReason.MouseFocusReason)
+
+    def clear_note_selection(self) -> None:
+        if self.selected_event_id is None:
+            return
+
+        self.selected_event_id = None
         self.selected_shift_semitones = 0
         self.update_shift_label()
         self.update_note_selection_styles()
@@ -330,10 +356,12 @@ class MainWindow(QMainWindow):
                 cqt_times[-1] if len(cqt_times) else 1,
                 cqt_db.shape[0] if cqt_db.ndim else 1,
             )
-            self.update_cqt_overlay(cqt_plot, cqt_db.shape[0] if cqt_db.ndim else 1)
+            self.update_cqt_overlay(
+                cqt_plot, cqt_db.shape[0] if cqt_db.ndim else 1)
 
         if AnalysisPlot.LOG_BINS in self.spectrogram_plots:
-            log_bin_db, log_bin_times, log_bin_centers = compute_log_bins(audio)
+            log_bin_db, log_bin_times, log_bin_centers = compute_log_bins(
+                audio)
             self.spectrogram_plots[AnalysisPlot.LOG_BINS].update_spectrogram(
                 log_bin_db,
                 log_bin_times[-1] if len(log_bin_times) else 1,
@@ -365,7 +393,8 @@ class MainWindow(QMainWindow):
             max_cqt_bins(sample_rate=SAMPLE_RATE),
         )
         sample_cqt_db, _ = compute_cqt(sample, n_bins=source_bins)
-        overlay_floor = float(np.min(sample_cqt_db)) if sample_cqt_db.size else 0.0
+        overlay_floor = float(np.min(sample_cqt_db)
+                              ) if sample_cqt_db.size else 0.0
         shifted_cqt_db = shift_frequency_bins(
             sample_cqt_db,
             self.selected_shift_semitones,
